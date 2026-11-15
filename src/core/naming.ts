@@ -1,53 +1,60 @@
-import type { Panel, QuadGroup } from './types';
+import type { Panel, QuadGroup } from "@/core/types";
 
-/** Normaliza o texto: sinal de menos Unicode, espaços não separáveis e espaços repetidos. */
+/**
+ * Normalizes Unicode minus signs and dashes, and collapses spaces. `\s` already matches the
+ * non-breaking spaces (U+00A0, U+202F) that exports sometimes carry.
+ */
 export const normalizeName = (s: string): string =>
-  s
-    .normalize('NFKC')
-    .replace(/[−–]/g, '-')
-    .replace(/[  ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  s.normalize("NFKC").replace(/[−–]/g, "-").replace(/\s+/g, " ").trim();
 
-// "panel 1_" exato: não casa com "panel 10_" nem com "xpanel 1_".
+// Exactly "panel 1_" or "panel 2_": "panel 10_" and "xpanel 1_" must not match.
 const PANEL_RE = /(?:^|[^A-Za-z0-9])panel ([12])_/i;
 const ALIVE_RE = /\/Alive$/;
-const QUAD_RE = /\/Alive\/Q(\d{1,2}):\s*(.+)$/;
+const QUADRANT_RE = /\/Alive\/Q(\d{1,2}):\s*(.+)$/;
+const QUADRANTS_PER_GROUP = 4;
+const LAST_QUADRANT = 12;
 
 export function panelOf(name: string): Panel | null {
-  const m = PANEL_RE.exec(normalizeName(name));
-  return m ? (Number(m[1]) as Panel) : null;
+  const match = PANEL_RE.exec(normalizeName(name));
+  return match ? (Number(match[1]) as Panel) : null;
 }
 
-/** Linha que representa 100% das células do panel. */
+/** The row that holds 100% of the panel's cells. */
 export const isAlive = (name: string): boolean => ALIVE_RE.test(normalizeName(name));
 
-export interface QuadrantMarker {
-  /** Nome sem o sinal, ex.: "PerCP-Vio700-A". */
+export type QuadrantMarker = {
+  /** Name without the sign, for example "PerCP-Vio700-A". */
   marker: string;
-  positive: boolean;
-}
+  isPositive: boolean;
+};
 
-export interface Quadrant {
+export type Quadrant = {
   q: number;
   group: QuadGroup;
   markers: QuadrantMarker[];
-}
+};
+
+const hasSign = (s: string) => s.endsWith("+") || s.endsWith("-");
+
+// The sign is always the last character: marker names have hyphens inside them.
+const toMarker = (s: string): QuadrantMarker => ({
+  marker: s.slice(0, -1).trim(),
+  isPositive: s.endsWith("+"),
+});
 
 /**
- * Lê uma linha de quadrante.
+ * Reads a quadrant row.
  * ".../Alive/Q1: PE-A- , PerCP-Vio700-A+" → { q: 1, group: 1, markers: [PE-A (-), PerCP-Vio700-A (+)] }
- * O sinal é sempre o último caractere de cada marcador (os nomes têm hífens internos).
  */
 export function parseQuadrant(name: string): Quadrant | null {
-  const m = QUAD_RE.exec(normalizeName(name));
-  if (!m) return null;
-  const q = Number(m[1]);
-  if (q < 1 || q > 12) return null;
-  const markers = m[2]
-    .split(',')
+  const match = QUADRANT_RE.exec(normalizeName(name));
+  if (!match) return null;
+  const q = Number(match[1]);
+  if (q < 1 || q > LAST_QUADRANT) return null;
+  const markers = match[2]
+    .split(",")
     .map((s) => s.trim())
-    .filter((s) => s.endsWith('+') || s.endsWith('-'))
-    .map((s) => ({ marker: s.slice(0, -1).trim(), positive: s.endsWith('+') }));
-  return { q, group: Math.ceil(q / 4) as QuadGroup, markers };
+    .filter(hasSign)
+    .map(toMarker);
+  return { q, group: Math.ceil(q / QUADRANTS_PER_GROUP) as QuadGroup, markers };
 }

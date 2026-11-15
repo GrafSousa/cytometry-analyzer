@@ -1,65 +1,67 @@
-import type { Result } from './result';
-import type { DomainError } from './errors';
+import type { DomainError } from "@/core/errors";
+import type { Result } from "@/core/result";
 
 export type Panel = 1 | 2;
 export const PANELS: readonly Panel[] = [1, 2];
 
-/** Grupo de quadrantes: 1 = Q1-Q4, 2 = Q5-Q8, 3 = Q9-Q12. */
+/** Quadrant group: 1 = Q1–Q4, 2 = Q5–Q8, 3 = Q9–Q12. */
 export type QuadGroup = 1 | 2 | 3;
 
-/** Grade crua lida da planilha (linhas x colunas). */
+/** Raw grid read from the spreadsheet (rows × columns). */
 export type Grid = unknown[][];
 
-/** Linha relevante da planilha: só "Name" e "#Cells". */
-export interface Row {
-  /** Número da linha na planilha original (1 = primeira linha), para mensagens de erro. */
+/** A relevant spreadsheet row: only "Name" and "#Cells". */
+export type Row = {
+  /** Line number in the original spreadsheet (1 = first line), for error messages. */
   line: number;
   name: string;
-  /** #Cells já convertido; null quando o valor não é numérico. */
+  /** #Cells already parsed; null when the value is not a count. */
   cells: number | null;
   rawCells: unknown;
-}
+};
 
-/** Soma de um marcador positivo dentro de um grupo de quadrantes. */
-export interface GroupSum {
+/** Sum of one positive marker inside one quadrant group. */
+export type GroupSum = {
   group: QuadGroup;
   quadrants: number[];
   cells: number;
-}
+};
 
-/** Resultado de um marcador positivo (ex.: "PE-A+"). */
-export interface MarkerResult {
-  /** Nome do marcador sem o sinal, ex.: "PE-A". */
+/** Result of one positive marker (for example "PE-A+"). */
+export type MarkerResult = {
+  /** Marker name without the sign, for example "PE-A". */
   marker: string;
-  /** Uma entrada por grupo de quadrantes em que o marcador aparece. */
+  /** One entry per quadrant group the marker appears in. */
   groups: GroupSum[];
-  /** Total de células. Se o marcador aparece em mais de um grupo, é a média das somas dos grupos. */
+  /** Total cells. When the marker appears in more than one group, the mean of the group sums. */
   cells: number;
-  /** cells / Alive (0 a 1). */
+  /** cells / Alive (0 to 1). */
   fraction: number;
-}
+};
 
-export interface PanelResult {
+export type PanelResult = {
   panel: Panel;
-  /** Nome da linha usada como 100%. */
+  /** Name of the row used as 100%. */
   aliveName: string;
   alive: number;
   markers: MarkerResult[];
-}
+};
 
 export type PanelOutcome = Result<PanelResult, DomainError[]>;
 
+export type ReportStatus = "ok" | "partial" | "failed";
+
 /**
- * Relatório de um arquivo. Cada arquivo tem o seu, e um nunca afeta o outro.
- * `cached: true` quando o resultado veio do cache (mesmo conteúdo já calculado antes).
+ * Report of one file. Each file has its own, and one never affects another.
+ * `cached: true` when the result came from the cache (the same content was computed before).
  */
 export type FileReport = { id: string; fileName: string; cached?: boolean } & (
-  | { status: 'failed'; errors: DomainError[] }
-  | { status: 'ok' | 'partial'; panels: Record<Panel, PanelOutcome> }
+  | { status: "failed"; errors: DomainError[] }
+  | { status: "ok" | "partial"; panels: Record<Panel, PanelOutcome> }
 );
 
 /**
- * Versão das regras de cálculo. Faz parte da chave do cache:
- * ao mudar qualquer regra em compute.ts, aumente este número para invalidar resultados antigos.
+ * Version of the calculation rules. It is part of the cache key: raise it whenever a rule in
+ * src/core changes, so results computed with the old rules are dropped.
  */
 export const CALC_VERSION = 1;

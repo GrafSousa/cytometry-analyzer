@@ -1,11 +1,11 @@
 /**
- * Nome e textos de marca do app, num lugar só.
- * Quando o nome definitivo for escolhido, basta trocar aqui (e no Design System).
+ * The app's name and brand copy, in one place. When the final name is chosen, change it here
+ * (and in the Design System).
  */
 export const APP = {
-  name: 'Planilhas Anna',
-  tagline: 'Análise de citometria · panel 1 e panel 2',
-  description: 'Calcula percentuais dos marcadores positivos por panel, direto no navegador.',
-  /** Prefixo das chaves guardadas no navegador. Não mude depois de publicar, ou o cache existente será perdido. */
-  storagePrefix: 'planilhas-anna',
+  name: "Planilhas Anna",
+  tagline: "Análise de citometria · panel 1 e panel 2",
+  description: "Calcula percentuais dos marcadores positivos por panel, direto no navegador.",
+  /** Prefix of the keys stored in the browser. Never change it after publishing, or users lose their cache. */
+  storagePrefix: "planilhas-anna",
 } as const;

@@ -1,97 +1,125 @@
-import { APP } from '../config';
-import { CALC_VERSION, type FileReport } from '../core/types';
+import { APP } from "@/config";
+import { CALC_VERSION, type FileReport } from "@/core/types";
 
-/** O que fica guardado: o resultado do cálculo, sem id nem nome de arquivo. Nunca o conteúdo da planilha. */
-export type CachedResult = FileReport extends infer R ? (R extends FileReport ? Omit<R, 'id' | 'fileName' | 'cached'> : never) : never;
+/** What is stored: the computed result, without id or file name. Never the spreadsheet content. */
+export type CachedResult = FileReport extends infer R
+  ? R extends FileReport
+    ? Omit<R, "id" | "fileName" | "cached">
+    : never
+  : never;
 
-export interface ResultCache {
+export type ResultCache = {
   get(key: string): CachedResult | undefined;
   set(key: string, value: CachedResult): void;
   clear(): void;
   readonly size: number;
-}
+};
 
-/** Impressão digital do conteúdo: SHA-256 dos bytes + versão das regras. O nome do arquivo não entra. */
+const DEFAULT_MAX_ENTRIES = 500;
+const keyPrefix = `v${CALC_VERSION}:`;
+
+/** Content fingerprint: SHA-256 of the bytes plus the rules version. The file name is not part of it. */
 export async function cacheKey(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
-  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
-  return `v${CALC_VERSION}:${hex}`;
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${keyPrefix}${hex}`;
 }
 
-/** Cache só em memória: vale enquanto a página estiver aberta. */
+/** In-memory cache: lasts while the page is open. */
 export function createMemoryCache(): ResultCache {
-  const map = new Map<string, CachedResult>();
+  const entries = new Map<string, CachedResult>();
   return {
-    get: (k) => map.get(k),
-    set: (k, v) => void map.set(k, v),
-    clear: () => map.clear(),
+    get: (key) => entries.get(key),
+    set: (key, value) => void entries.set(key, value),
+    clear: () => entries.clear(),
     get size() {
-      return map.size;
+      return entries.size;
     },
   };
 }
 
-/** Parte de Storage que usamos (localStorage atende; nos testes, um objeto falso). */
-export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+/** The part of Storage we use (localStorage in the browser, a fake object in tests). */
+export type KeyValueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-interface Entry {
+type Entry = {
   savedAt: number;
   value: CachedResult;
+};
+
+type PersistentCacheOptions = { storageKey?: string; maxEntries?: number };
+
+const isCurrentEntry = (key: string, entry: Entry | undefined): entry is Entry =>
+  key.startsWith(keyPrefix) &&
+  typeof entry?.savedAt === "number" &&
+  typeof entry.value === "object" &&
+  "status" in entry.value;
+
+/** Loads the stored entries, dropping old rule versions and malformed data. */
+function loadEntries(storage: KeyValueStorage, storageKey: string): Map<string, Entry> {
+  const entries = new Map<string, Entry>();
+  try {
+    const raw = storage.getItem(storageKey);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, Entry | undefined>) : {};
+    for (const [key, entry] of Object.entries(parsed)) {
+      if (isCurrentEntry(key, entry)) entries.set(key, entry);
+    }
+  } catch {
+    // Corrupted data: start empty.
+  }
+  return entries;
+}
+
+function saveEntries(storage: KeyValueStorage, storageKey: string, entries: Map<string, Entry>) {
+  try {
+    if (entries.size === 0) storage.removeItem(storageKey);
+    else storage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Storage full or blocked: keep working from memory.
+  }
 }
 
 /**
- * Cache que sobrevive a recarregar a página, guardado no navegador (localStorage).
- * - Guarda até `maxEntries` resultados; ao passar disso, descarta os mais antigos.
- * - Qualquer falha do armazenamento (cheio, bloqueado, dado corrompido) é ignorada:
- *   o app só recalcula, nunca quebra por causa do cache.
+ * Cache that survives a page reload, kept in the browser (localStorage).
+ * Holds up to `maxEntries` results and drops the oldest past that. Any storage failure is
+ * ignored: the app only recomputes, it never breaks because of the cache.
  */
-export function createPersistentCache(storage: KeyValueStorage, storageKey = `${APP.storagePrefix}:cache`, maxEntries = 500): ResultCache {
-  const memory = new Map<string, Entry>();
-
-  try {
-    const raw = storage.getItem(storageKey);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, Entry>) : {};
-    for (const [k, e] of Object.entries(parsed)) {
-      // Descarta entradas de versões antigas das regras ou malformadas.
-      if (k.startsWith(`v${CALC_VERSION}:`) && e && typeof e.savedAt === 'number' && e.value && 'status' in e.value) memory.set(k, e);
-    }
-  } catch {
-    // Dado corrompido: começa vazio.
-  }
-
-  const persist = () => {
-    try {
-      if (memory.size === 0) storage.removeItem(storageKey);
-      else storage.setItem(storageKey, JSON.stringify(Object.fromEntries(memory)));
-    } catch {
-      // Armazenamento cheio ou indisponível: segue só em memória.
-    }
-  };
+export function createPersistentCache(
+  storage: KeyValueStorage,
+  {
+    storageKey = `${APP.storagePrefix}:cache`,
+    maxEntries = DEFAULT_MAX_ENTRIES,
+  }: PersistentCacheOptions = {},
+): ResultCache {
+  const entries = loadEntries(storage, storageKey);
+  const persist = () => saveEntries(storage, storageKey, entries);
 
   return {
-    get: (k) => memory.get(k)?.value,
-    set(k, value) {
-      memory.delete(k);
-      memory.set(k, { savedAt: Date.now(), value });
-      while (memory.size > maxEntries) memory.delete(memory.keys().next().value as string);
+    get: (key) => entries.get(key)?.value,
+    set(key, value) {
+      // Delete first so the key moves to the end of the Map's insertion order.
+      entries.delete(key);
+      entries.set(key, { savedAt: Date.now(), value });
+      while (entries.size > maxEntries) entries.delete(entries.keys().next().value as string);
       persist();
     },
     clear() {
-      memory.clear();
+      entries.clear();
       persist();
     },
     get size() {
-      return memory.size;
+      return entries.size;
     },
   };
 }
 
-/** Cache do navegador quando disponível; senão, só em memória. */
+/** The browser cache when localStorage is available; otherwise memory only. */
 export function createBrowserCache(): ResultCache {
   try {
-    if (typeof window !== 'undefined' && window.localStorage) return createPersistentCache(window.localStorage);
+    if (typeof window !== "undefined" && window.localStorage) {
+      return createPersistentCache(window.localStorage);
+    }
   } catch {
-    // localStorage bloqueado (ex.: modo privado restrito).
+    // localStorage blocked (for example a strict private window).
   }
   return createMemoryCache();
 }

@@ -1,74 +1,113 @@
-import { ok, err } from './result';
-import type { DomainError } from './errors';
-import { isAlive, panelOf, parseQuadrant } from './naming';
-import type { GroupSum, MarkerResult, Panel, PanelOutcome, QuadGroup, Row } from './types';
+import type { DomainError } from "@/core/errors";
+import { isAlive, panelOf, parseQuadrant, type Quadrant } from "@/core/naming";
+import { err, ok, type Result } from "@/core/result";
+import type { GroupSum, MarkerResult, Panel, PanelOutcome, QuadGroup, Row } from "@/core/types";
 
-/**
- * Calcula um panel de uma planilha.
- *
- * Regras:
- * - Só linhas com "panel N_" no nome.
- * - 100% = #Cells da linha que termina em "/Alive".
- * - Marcadores negativos (terminados em "-") são ignorados.
- * - Cada marcador positivo soma o #Cells dos quadrantes em que aparece, dentro de cada grupo
- *   (Q1–Q4, Q5–Q8, Q9–Q12).
- * - Se o marcador aparece em mais de um grupo (ex.: PE-Vio770-A+ em Q5–Q8 e Q9–Q12),
- *   o total é a MÉDIA das somas dos grupos.
- * - % = total / Alive.
- */
-export function analyzePanel(rows: Row[], panel: Panel): PanelOutcome {
-  const mine = rows.filter((r) => panelOf(r.name) === panel);
-  if (mine.length === 0) return err([{ code: 'MissingPanel', panel }]);
+/** Marker → quadrant group → sum. */
+type MarkerSums = Map<string, Map<QuadGroup, GroupSum>>;
 
-  const alives = mine.filter((r) => isAlive(r.name));
-  if (alives.length === 0) return err([{ code: 'MissingAliveRow', panel }]);
-  if (alives.length > 1) return err([{ code: 'DuplicateAliveRow', panel, lines: alives.map((r) => r.line) }]);
+type QuadrantTotals = {
+  groupTotals: Map<QuadGroup, number>;
+  markerSums: MarkerSums;
+  quadrantRows: number;
+  errors: DomainError[];
+};
 
-  const aliveRow = alives[0];
-  const alive = aliveRow.cells;
-  if (alive === null) return err([{ code: 'NonNumericCells', panel, line: aliveRow.line, raw: aliveRow.rawCells }]);
-  if (alive === 0) return err([{ code: 'AliveZero', panel }]);
+/** The panel's Alive row and its count, which is the 100% of every percentage. */
+function findAlive(rows: Row[], panel: Panel): Result<{ row: Row; cells: number }, DomainError[]> {
+  const alives = rows.filter((r) => isAlive(r.name));
+  if (alives.length === 0) return err([{ code: "MissingAliveRow", panel }]);
+  if (alives.length > 1) {
+    return err([{ code: "DuplicateAliveRow", panel, lines: alives.map((r) => r.line) }]);
+  }
+  const [row] = alives;
+  if (row.cells === null) {
+    return err([{ code: "NonNumericCells", panel, line: row.line, raw: row.rawCells }]);
+  }
+  if (row.cells === 0) return err([{ code: "AliveZero", panel }]);
+  return ok({ row, cells: row.cells });
+}
 
-  const errors: DomainError[] = [];
-  const groupTotals = new Map<QuadGroup, number>();
-  // marcador → grupo → soma
-  const sums = new Map<string, Map<QuadGroup, GroupSum>>();
-  let quadrantRows = 0;
+function addPositiveMarkers(sums: MarkerSums, quadrant: Quadrant, cells: number) {
+  for (const { marker } of quadrant.markers.filter((m) => m.isPositive)) {
+    const byGroup = sums.get(marker) ?? new Map<QuadGroup, GroupSum>();
+    const sum = byGroup.get(quadrant.group) ?? { group: quadrant.group, quadrants: [], cells: 0 };
+    sum.quadrants.push(quadrant.q);
+    sum.cells += cells;
+    byGroup.set(quadrant.group, sum);
+    sums.set(marker, byGroup);
+  }
+}
 
-  for (const r of mine) {
-    const quad = parseQuadrant(r.name);
-    if (!quad) continue;
-    quadrantRows++;
-    if (r.cells === null) {
-      errors.push({ code: 'NonNumericCells', panel, line: r.line, raw: r.rawCells });
+function sumQuadrants(rows: Row[], panel: Panel): QuadrantTotals {
+  const totals: QuadrantTotals = {
+    groupTotals: new Map(),
+    markerSums: new Map(),
+    quadrantRows: 0,
+    errors: [],
+  };
+  for (const row of rows) {
+    const quadrant = parseQuadrant(row.name);
+    if (!quadrant) continue;
+    totals.quadrantRows++;
+    if (row.cells === null) {
+      totals.errors.push({ code: "NonNumericCells", panel, line: row.line, raw: row.rawCells });
       continue;
     }
-    groupTotals.set(quad.group, (groupTotals.get(quad.group) ?? 0) + r.cells);
-
-    for (const { marker, positive } of quad.markers) {
-      if (!positive) continue;
-      const byGroup = sums.get(marker) ?? new Map<QuadGroup, GroupSum>();
-      const g = byGroup.get(quad.group) ?? { group: quad.group, quadrants: [], cells: 0 };
-      g.quadrants.push(quad.q);
-      g.cells += r.cells;
-      byGroup.set(quad.group, g);
-      sums.set(marker, byGroup);
-    }
+    const group = quadrant.group;
+    totals.groupTotals.set(group, (totals.groupTotals.get(group) ?? 0) + row.cells);
+    addPositiveMarkers(totals.markerSums, quadrant, row.cells);
   }
+  return totals;
+}
 
-  if (quadrantRows === 0) return err([{ code: 'NoQuadrantRows', panel }]);
+// Each group of four quadrants splits the whole Alive population, so each must add up to it.
+function checkGroupTotals(totals: Map<QuadGroup, number>, alive: number, panel: Panel) {
+  return [...totals]
+    .sort(([a], [b]) => a - b)
+    .filter(([, total]) => total !== alive)
+    .map(([group, total]): DomainError => ({
+      code: "QuadrantSumMismatch",
+      panel,
+      group,
+      expected: alive,
+      actual: total,
+    }));
+}
 
-  // Cada grupo de 4 quadrantes divide o Alive inteiro, então a soma do grupo deve ser igual ao Alive.
-  for (const [group, total] of [...groupTotals].sort(([a], [b]) => a - b)) {
-    if (total !== alive) errors.push({ code: 'QuadrantSumMismatch', panel, group, expected: alive, actual: total });
-  }
-  if (errors.length > 0) return err(errors);
-
-  const markers: MarkerResult[] = [...sums].map(([marker, byGroup]) => {
+function toMarkerResults(sums: MarkerSums, alive: number): MarkerResult[] {
+  return [...sums].map(([marker, byGroup]) => {
     const groups = [...byGroup.values()].sort((a, b) => a.group - b.group);
-    const cells = groups.reduce((s, g) => s + g.cells, 0) / groups.length;
+    // A marker in more than one group (PE-Vio770-A+) counts as the mean of its group sums.
+    const cells = groups.reduce((sum, g) => sum + g.cells, 0) / groups.length;
     return { marker, groups, cells, fraction: cells / alive };
   });
+}
 
-  return ok({ panel, aliveName: aliveRow.name, alive, markers });
+/**
+ * Computes one panel of one spreadsheet: only "panel N_" rows, Alive as 100%, negative markers
+ * ignored, each positive marker summed per quadrant group, % = total / Alive.
+ */
+export function analyzePanel(rows: Row[], panel: Panel): PanelOutcome {
+  const panelRows = rows.filter((r) => panelOf(r.name) === panel);
+  if (panelRows.length === 0) return err([{ code: "MissingPanel", panel }]);
+
+  const alive = findAlive(panelRows, panel);
+  if (!alive.ok) return alive;
+
+  const totals = sumQuadrants(panelRows, panel);
+  if (totals.quadrantRows === 0) return err([{ code: "NoQuadrantRows", panel }]);
+
+  const errors = [
+    ...totals.errors,
+    ...checkGroupTotals(totals.groupTotals, alive.value.cells, panel),
+  ];
+  if (errors.length > 0) return err(errors);
+
+  return ok({
+    panel,
+    aliveName: alive.value.row.name,
+    alive: alive.value.cells,
+    markers: toMarkerResults(totals.markerSums, alive.value.cells),
+  });
 }

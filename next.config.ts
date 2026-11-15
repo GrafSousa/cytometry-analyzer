@@ -1,11 +1,10 @@
-import type { NextConfig } from 'next';
+import type { NextConfig } from "next";
 
-// Site 100% estático: `npm run build` gera a pasta out/, que pode ser publicada em qualquer
-// hospedagem de arquivos (GitHub Pages, Cloudflare, Netlify, Vercel). Não há servidor.
+// A fully static site: `pnpm build` writes out/, which any static host can serve (GitHub Pages,
+// Cloudflare, Netlify, Vercel). There is no server, so the spreadsheets never leave the browser.
 const nextConfig: NextConfig = {
-  output: 'export',
-  // Para GitHub Pages em https://<usuario>.github.io/<repo>/, descomente e ajuste:
-  // basePath: '/planilhas-anna',
+  output: "export",
+  // For GitHub Pages at https://<user>.github.io/<repo>/, set the repository name as basePath.
 };
 
 export default nextConfig;

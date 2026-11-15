@@ -1,9 +1,10 @@
-import { APP } from '../config';
-import { FlaskIcon, LockIcon } from './icons';
+import { FlaskIcon, LockIcon } from "@/components/icons";
+import { APP } from "@/config";
+import { ptBR } from "@/messages/pt-br";
 
 export function AppHeader() {
   return (
-    <header className="pa-header">
+    <header data-slot="app-header" className="pa-header">
       <div className="pa-header__inner">
         <div className="pa-brand">
           <div className="pa-brand__mark">
@@ -16,7 +17,7 @@ export function AppHeader() {
         </div>
         <div className="pa-privacy">
           <LockIcon size={16} />
-          <span>Os arquivos ficam no seu computador</span>
+          <span>{ptBR.header.privacy}</span>
         </div>
       </div>
     </header>
