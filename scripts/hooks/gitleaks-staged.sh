@@ -1,0 +1,9 @@
+#!/bin/sh
+# Scans the staged changes for secrets with Gitleaks.
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "✖ Gitleaks is not installed, so the secret scan cannot run. Install it with: brew install gitleaks"
+  exit 1
+fi
+
+gitleaks git --pre-commit --staged --redact --no-banner
