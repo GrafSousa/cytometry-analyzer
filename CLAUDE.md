@@ -1,72 +1,99 @@
-# CLAUDE.md
+# cytometry-analyzer
 
-Guia para o Claude Code trabalhar neste repositório. Leia este arquivo inteiro antes de mudar qualquer coisa. O plano dos próximos passos está em `docs/IMPLEMENTACAO.md`.
+A Next.js + TypeScript web app that reads spreadsheets exported by the MACSQuant cytometer (`.xls`, `.xlsx` or `.csv`). For each spreadsheet it computes the percentage of each positive marker relative to the live cells (Alive), separately for panel 1 and panel 2. **Everything runs in the browser:** there is no server and no database, and the files never leave the user's computer.
 
-## O que é
+Start every coding session here. The next steps are in `docs/implementation-plan.md` and the decisions behind the project in `docs/implementation-decisions.md`.
 
-Aplicação web em Next.js + TypeScript que lê planilhas exportadas do citômetro MACSQuant (`.xls`, `.xlsx` ou `.csv`). Para cada planilha, ela calcula o percentual de cada marcador positivo em relação às células vivas (Alive), separadamente no panel 1 e no panel 2. **Tudo roda no navegador:** não há servidor nem banco de dados, e os arquivos nunca saem do computador do usuário.
+If anything in `docs/` conflicts with the code, ask Gustavo before choosing either way.
 
-## Comandos
+## Commands
 
 ```bash
-npm install        # Node >= 22.12; a SheetJS vem de cdn.sheetjs.com (ver package.json)
-npm run dev        # http://localhost:3000
-npm test           # Vitest (ambiente node)
-npm run typecheck  # tsc --noEmit
-npm run build      # site estático em out/ (output: 'export')
+pnpm install        # Node 22 (.nvmrc); also installs the Git hooks (Lefthook). SheetJS comes from cdn.sheetjs.com
+pnpm dev            # http://localhost:3000
+pnpm test           # Vitest
+pnpm test:cov       # with coverage
+pnpm lint           # ESLint, no warnings allowed
+pnpm typecheck      # next typegen + tsc --noEmit
+pnpm format         # Prettier
+pnpm build          # static site in out/ (output: "export")
 ```
 
-Antes de abrir um PR, rode sempre `npm run typecheck` e `npm test`.
+Gitleaks must be installed for the pre-commit hook: `brew install gitleaks`.
 
-## Regras de negócio (não mude sem pedido explícito)
+## Business rules (do not change without an explicit request)
 
-1. Usar só as colunas **Name** e **#Cells**.
-2. Considerar só as linhas com `panel 1_` ou `panel 2_` no nome. `panel 10_` não conta. Cada panel é calculado separadamente.
-3. **100%** = #Cells da linha cujo nome termina em `/Alive`.
-4. Os quadrantes `.../Alive/Qn: MARCADOR± , MARCADOR±` (Q1–Q12) formam 3 grupos: Q1–Q4, Q5–Q8 e Q9–Q12. Cada grupo soma exatamente o Alive.
-5. Marcadores negativos (`-`) são ignorados. Para cada marcador positivo (`+`), somar o #Cells dos quadrantes em que ele aparece, dentro de cada grupo.
-6. Se o marcador aparece em mais de um grupo (ex.: `PE-Vio770-A+`), o total é a **média** das somas dos grupos.
-7. % = total ÷ Alive, exibido com 2 casas decimais e no formato pt-BR (`94,11%`, `8.664`, `1.798,5`).
-8. **Cada planilha é independente.** Nunca há média entre planilhas, e um erro numa planilha nunca afeta as outras.
-9. Se faltar um panel, o outro é mostrado normalmente junto com o erro (status `partial`).
-10. Até 50 arquivos por envio.
+1. Use only the **Name** and **#Cells** columns.
+2. Consider only the rows with `panel 1_` or `panel 2_` in the name. `panel 10_` does not count. Each panel is computed separately.
+3. **100%** = #Cells of the row whose name ends in `/Alive`.
+4. The quadrants `.../Alive/Qn: MARKER± , MARKER±` (Q1–Q12) form 3 groups: Q1–Q4, Q5–Q8 and Q9–Q12. Each group adds up to exactly the Alive count.
+5. Negative markers (`-`) are ignored. For each positive marker (`+`), sum the #Cells of the quadrants it appears in, within each group.
+6. When a marker appears in more than one group (for example `PE-Vio770-A+`), its total is the **mean** of the group sums.
+7. % = total ÷ Alive, shown with 2 decimal places in pt-BR format (`94,11%`, `8.664`, `1.798,5`).
+8. **Each spreadsheet is independent.** There is never a mean across spreadsheets, and an error in one spreadsheet never affects the others.
+9. When a panel is missing, the other one is shown normally next to the error (status `partial`).
+10. Up to 50 files per batch.
 
-Os erros possíveis estão em `src/core/errors.ts` (union `DomainError`). Cada código tem uma mensagem em português em `toMessage`, e o `switch` é exaustivo: um código novo sem mensagem não compila.
+The possible errors are the `DomainError` union in `src/core/errors.ts`. Each code has a pt-BR message in `src/messages/pt-br.ts` (`errors`), in a table typed by error code: a new code without a message does not compile.
 
-## Arquitetura
+**Every change to a calculation rule requires raising `CALC_VERSION`** in `src/core/types.ts`, which invalidates the cached results.
+
+## Architecture
 
 ```
-src/core/       regras puras: naming, rows, compute, analyze, search, format, errors, result, types
-src/adapters/   sheetjs.ts — ÚNICO arquivo que importa 'xlsx'
-src/services/   processBatch.ts (lote, isolamento de erros) e cache.ts (cache por SHA-256)
-src/components/ React (client components)
-src/app/        Next.js App Router: layout, page, globals.css
-src/config.ts   nome do app e prefixo do armazenamento
+src/core/        pure rules: naming, rows, compute, analyze, search, format, errors, result, types
+src/adapters/    sheetjs.ts — the ONLY file that imports "xlsx"
+src/services/    process-batch.ts (batch, error isolation) and cache.ts (cache by SHA-256)
+src/hooks/       React hooks that hold a component's state (use-batch.ts)
+src/components/  React components
+src/messages/    pt-br.ts — all UI copy
+src/app/         Next.js App Router: layout, page, globals.css
+src/tests/       test support: helpers and the fictional example fixture
+src/config.ts    app name, tagline and storage prefix
 ```
 
-Regras que valem sempre:
+- **`src/core` is pure.** It imports no React, Next, SheetJS, `window` or `document`, and nothing from the outer folders (except the copy in `src/messages`). It receives data and returns data. ESLint (`no-restricted-imports`) enforces it.
+- **Dependencies point one way:** `app` → `components` → `hooks` → `services` → `adapters` / `core`.
+- **Errors are data, not exceptions.** Use `Result<T, E>` (`src/core/result.ts`) and `DomainError`. `processFile` never rejects: any failure becomes a `FileReport` with `status: "failed"`.
+- **The spreadsheet reader is injectable.** `processBatch(files, { read, cache, onProgress })` accepts a fake reader in tests. Keep it that way.
+- **Cache:** the key is `v{CALC_VERSION}:{sha256 of the content}`. The cache stores results only, never the spreadsheet content.
+- The app name lives only in `src/config.ts`. Never write "Planilhas Anna" anywhere else in the code.
 
-- **`src/core` é puro.** Não importa React, Next, SheetJS, `window` nem `document`. Recebe dados e devolve dados. É aí que ficam as regras e a maior parte dos testes.
-- **Erros são dados, não exceções.** Use `Result<T, E>` (`src/core/result.ts`) e `DomainError`. `processFile` nunca rejeita: qualquer falha vira um `FileReport` com `status: 'failed'`.
-- **A leitura da planilha é injetável.** `processBatch(files, { read, cache, onProgress })` aceita um leitor falso nos testes. Mantenha assim.
-- **Cache:** a chave é `v{CALC_VERSION}:{sha256 do conteúdo}`. **Toda mudança nas regras de cálculo exige aumentar `CALC_VERSION`** em `src/core/types.ts`. O cache guarda só resultados, nunca o conteúdo da planilha.
-- O nome do app fica só em `src/config.ts`. Não escreva "Planilhas Anna" em outros lugares do código.
+## Project rules
 
-## Interface e Design System
+- **Everything is in English:** code, comments, commits, pull requests, branch names, file and folder names, and documentation. The only exception is the UI copy, which is pt-BR and lives in `src/messages/pt-br.ts`; never hard-code UI copy in a component.
+- **UI copy:** short sentences, addressing the user as "você". Status always written as text (Sucesso, Parcial, Erro, Do cache), never color alone.
+- **Accessibility (WCAG 2.2 AA):** one `role="status"` region with the batch summary, real inputs with a `<label>`, visible focus, targets of at least 44 px, and `prefers-reduced-motion` respected.
 
-- Telas: https://claude.ai/artifact/3BkQcc3a7oaZy6YNsKTVD5
+## Interface and Design System
+
+- Screens: https://claude.ai/artifact/3BkQcc3a7oaZy6YNsKTVD5
 - Design System: https://claude.ai/artifact/EWPdcWnjpE2kmqme2tG6Wv
-- `src/app/globals.css` é gerado do Design System: as variáveis vêm de `tokens.json`, e as classes `pa-*` e as animações vêm de `components/bundle.css`. Use as classes `pa-*` e as variáveis (`var(--accent)`, `var(--space-4)`…). **Nunca use cores em hexadecimal soltas no código.**
-- Texto da interface em português do Brasil, frases curtas, tratando o usuário por "você". Status sempre em texto (Sucesso, Parcial, Erro, Do cache), nunca só com cor.
-- Acessibilidade: uma região `role="status"` com o resumo do lote, inputs reais com `<label>`, foco visível, alvos de pelo menos 44 px e `prefers-reduced-motion` respeitado.
+- `src/app/globals.css` is generated from the Design System: the variables come from `tokens.json`, and the `pa-*` classes and the animations from `components/bundle.css`. Use the `pa-*` classes and the variables (`var(--accent)`, `var(--space-4)`…). **Never use loose hex colors in the code.**
 
-## Testes
+## Code quality
 
-- Vitest em `tests/`, organizado como `src/`. Um teste novo para cada regra ou erro novo.
-- A planilha de exemplo (`tests/fixtures/exemplo/`) é **fictícia**. Os números esperados estão no README dela.
-- **NUNCA faça commit de planilhas reais do laboratório: o repositório é público.** Para testar com arquivos reais, coloque-os em `fixtures-local/` (já no `.gitignore`). `tests/adapters/local.test.ts` lê essa pasta quando ela existe.
+- Follow `.claude/skills/code-quality` (Clean Code, SOLID, low coupling, low complexity, Big-O) whenever you write or review code.
+- ESLint enforces the limits (cyclomatic complexity 8, cognitive complexity 10, depth 3, 3 parameters, 50 lines per function, 250 per file). Refactor instead of disabling a rule.
+- Comments explain why, never what.
 
-## Git
+## Components
 
-- Nunca faça commit direto na `main`. Crie uma branch (`feat/…`, `fix/…`, `docs/…`) e abra um PR para revisão.
-- Mensagens de commit em português, no imperativo: "Adiciona busca por nome".
+- Follow `.claude/skills/react-components` when creating components or converting a design.
+- Kebab-case files, named exports only (except the route files Next.js requires as default exports), `import type` for types, no `React.FC`. ESLint enforces the last three.
+
+## Tests
+
+- Vitest, `*.spec.ts(x)` next to the code they test. Globals are on (`describe`, `it`, `expect` without imports) and `@/` paths resolve from `tsconfig.json`.
+- `describe("<kind>: <subject>")` with kinds such as `core`, `adapter`, `service`; `it("should …")`; `sut` for the thing under test.
+- One new test for every new rule or error.
+- The example spreadsheet (`src/tests/fixtures/example/`) is **fictional**. The expected numbers are in its README.
+- **NEVER commit real lab spreadsheets: the repository is public.** To test with real files, put them in `fixtures-local/` (git-ignored); `src/adapters/local-files.spec.ts` reads that folder when it exists. The pre-commit hook blocks any spreadsheet outside the example fixture.
+
+## Workflow
+
+- One branch per plan step, with a pull request for Gustavo to review. Never commit or push directly to `main`.
+- Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`…), checked by commitlint.
+- Never bypass the hooks with `--no-verify`. If a hook fails, fix the cause. `.claude/hooks/guard-git.sh` also blocks these for Claude Code.
+- Before opening a pull request: `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build`.
+- When a step is done, update `docs/implementation-plan.md`.

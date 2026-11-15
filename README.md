@@ -1,128 +1,123 @@
 # cytometry-analyzer
 
-> Nome provisório do produto: **Planilhas Anna** (definido em `src/config.ts`). Para continuar o desenvolvimento, veja `CLAUDE.md` e `docs/IMPLEMENTACAO.md`.
+> Working product name: **Planilhas Anna** (set in `src/config.ts`). To keep developing, see `CLAUDE.md` and `docs/implementation-plan.md`.
 
-Aplicação web que lê planilhas de citometria exportadas do MACSQuant (.xls, .xlsx ou .csv), calcula o percentual de cada marcador positivo em relação às células vivas (Alive) e mostra o resultado de cada planilha na tela.
+A web app that reads cytometry spreadsheets exported by the MACSQuant (.xls, .xlsx or .csv), computes the percentage of each positive marker relative to the live cells (Alive) and shows the result for each spreadsheet. The interface is in Brazilian Portuguese.
 
-Tudo roda **no navegador**: os arquivos não são enviados para nenhum servidor.
+Everything runs **in the browser**: the files are never sent to a server.
 
-## Como rodar
+## Running it
 
-Requisito: Node.js 22.12 ou mais recente.
+Requirements: Node.js 22 (`.nvmrc`), pnpm and, for the pre-commit hook, Gitleaks (`brew install gitleaks`).
 
 ```bash
-npm install        # instala Next.js, React, Vitest e a SheetJS (baixada de cdn.sheetjs.com)
-npm run dev        # abre em http://localhost:3000
-npm test           # roda os testes
-npm run typecheck  # confere os tipos
-npm run build      # gera o site estático na pasta out/
+pnpm install    # installs Next.js, React, Vitest, SheetJS (from cdn.sheetjs.com) and the Git hooks
+pnpm dev        # opens at http://localhost:3000
+pnpm test       # runs the tests
+pnpm lint       # ESLint
+pnpm typecheck  # checks the types
+pnpm build      # writes the static site to out/
 ```
 
-A pasta `out/` pode ser publicada em qualquer hospedagem de arquivos estáticos (GitHub Pages, Cloudflare, Netlify, Vercel). Para o GitHub Pages, ajuste o `basePath` em `next.config.ts`.
+`out/` can be served by any static host (GitHub Pages, Cloudflare, Netlify, Vercel). For GitHub Pages, set `basePath` in `next.config.ts`.
 
-> A SheetJS **não** é instalada pelo pacote `xlsx` do npm. Ele parou na versão 0.18.5, de 2022, que tem falhas de segurança conhecidas. O `package.json` aponta para o arquivo oficial em cdn.sheetjs.com. O `npm audit` não acompanha esse endereço, então confira de tempos em tempos se saiu uma versão nova em https://cdn.sheetjs.com.
+> SheetJS is **not** installed from the npm `xlsx` package, which stopped at 0.18.5 (2022) with known vulnerabilities. `package.json` points to the official tarball at cdn.sheetjs.com. `pnpm audit` does not track that URL, so check https://cdn.sheetjs.com for new versions from time to time.
 
-## Regras de cálculo
+## Calculation rules
 
-Cada planilha é calculada sozinha. Não há média entre planilhas, e os resultados de arquivos diferentes nunca são combinados.
+Each spreadsheet is computed on its own. There is no mean across spreadsheets, and results from different files are never combined.
 
-1. Usamos só as colunas **Name** e **#Cells**.
-2. Analisamos só as linhas com `panel 1_` ou `panel 2_` no nome (`panel 10_` não conta). Cada panel é calculado separadamente.
-3. **100%** = #Cells da linha cujo nome termina em `/Alive`.
-4. As linhas de quadrante (`.../Alive/Q1: PE-A- , PerCP-Vio700-A+` até Q12) formam 3 grupos: Q1–Q4, Q5–Q8 e Q9–Q12.
-5. Marcadores negativos (terminados em `-`) são ignorados. Para cada marcador positivo (terminado em `+`), somamos o #Cells dos quadrantes em que ele aparece.
-6. Se o marcador aparece em **mais de um grupo** (ex.: `PE-Vio770-A+` em Q5–Q8 e em Q9–Q12), o total é a **média** das somas dos grupos.
-7. % = total ÷ Alive, exibido com 2 casas decimais.
+1. Only the **Name** and **#Cells** columns are used.
+2. Only rows with `panel 1_` or `panel 2_` in the name are analyzed (`panel 10_` does not count). Each panel is computed separately.
+3. **100%** = #Cells of the row whose name ends in `/Alive`.
+4. The quadrant rows (`.../Alive/Q1: PE-A- , PerCP-Vio700-A+` up to Q12) form 3 groups: Q1–Q4, Q5–Q8 and Q9–Q12.
+5. Negative markers (ending in `-`) are ignored. For each positive marker (ending in `+`), the #Cells of the quadrants it appears in are summed.
+6. When a marker appears in **more than one group** (for example `PE-Vio770-A+` in Q5–Q8 and Q9–Q12), its total is the **mean** of the group sums.
+7. % = total ÷ Alive, shown with 2 decimal places.
 
-Exemplo com a planilha fictícia de `tests/fixtures/exemplo/`, panel 1 (Alive = 10.000):
+Example with the fictional spreadsheet in `src/tests/fixtures/example/`, panel 1 (Alive = 10.000):
 
-| Marcador | Quadrantes | Células | % do Alive |
-|---|---|---|---|
-| PerCP-Vio700-A+ | Q1 + Q2 | 7.500 | 75,00% |
-| PE-A+ | Q2 + Q3 | 2.000 | 20,00% |
-| PE-Vio770-A+ | média de Q5 + Q6 (2.000) e Q9 + Q10 (1.800) | 1.900 | 19,00% |
-| APC-A+ | Q6 + Q7 | 5.200 | 52,00% |
-| APC-Vio770-A+ | Q10 + Q11 | 500 | 5,00% |
+| Marker          | Quadrants                                    | Cells | % of Alive |
+| --------------- | -------------------------------------------- | ----- | ---------- |
+| PerCP-Vio700-A+ | Q1 + Q2                                      | 7.500 | 75,00%     |
+| PE-A+           | Q2 + Q3                                      | 2.000 | 20,00%     |
+| PE-Vio770-A+    | mean of Q5 + Q6 (2.000) and Q9 + Q10 (1.800) | 1.900 | 19,00%     |
+| APC-A+          | Q6 + Q7                                      | 5.200 | 52,00%     |
+| APC-Vio770-A+   | Q10 + Q11                                    | 500   | 5,00%      |
 
-## Erros e mensagens
+## Errors and messages
 
-Cada planilha recebe um destes status:
+Each spreadsheet gets one of these statuses (shown in Portuguese in the app):
 
-- **Sucesso**: os dois panels foram calculados.
-- **Parcial**: um panel foi calculado e o outro teve erro. O panel calculado aparece normalmente, junto com o erro do outro.
-- **Erro**: nenhum panel pôde ser calculado, ou o arquivo não pôde ser lido.
+- **Sucesso** (ok): both panels were computed.
+- **Parcial** (partial): one panel was computed and the other had an error. The computed panel is shown normally, next to the other one's error.
+- **Erro** (failed): no panel could be computed, or the file could not be read.
 
-Um erro numa planilha nunca afeta as outras do mesmo envio. Os erros verificados são:
+An error in one spreadsheet never affects the others in the same batch. The errors checked are:
 
-| Código | Quando acontece |
-|---|---|
-| `UnsupportedFormat` | Extensão diferente de .xls, .xlsx ou .csv |
-| `EmptyFile` / `UnreadableFile` | Arquivo vazio ou corrompido |
-| `MissingColumns` | Não há colunas `Name` e `#Cells` |
-| `MissingPanel` | Não há linhas do panel 1 ou do panel 2 |
-| `MissingAliveRow` / `DuplicateAliveRow` | Nenhuma ou mais de uma linha `/Alive` no panel |
-| `NonNumericCells` | #Cells vazio ou não numérico |
-| `AliveZero` | Alive = 0 |
-| `NoQuadrantRows` | Não há linhas Q1–Q12 |
-| `QuadrantSumMismatch` | A soma de um grupo de 4 quadrantes é diferente do Alive |
+| Code                                    | When                                            |
+| --------------------------------------- | ----------------------------------------------- |
+| `UnsupportedFormat`                     | Extension other than .xls, .xlsx or .csv        |
+| `EmptyFile` / `UnreadableFile`          | Empty or corrupted file                         |
+| `MissingColumns`                        | No `Name` and `#Cells` columns                  |
+| `MissingPanel`                          | No panel 1 or panel 2 rows                      |
+| `MissingAliveRow` / `DuplicateAliveRow` | No `/Alive` row in the panel, or more than one  |
+| `NonNumericCells`                       | Empty or non-numeric #Cells                     |
+| `AliveZero`                             | Alive = 0                                       |
+| `NoQuadrantRows`                        | No Q1–Q12 rows                                  |
+| `QuadrantSumMismatch`                   | A group of 4 quadrants does not add up to Alive |
 
-As mensagens em português estão em `src/core/errors.ts`. Cada envio aceita até 50 arquivos.
+The messages are in `src/messages/pt-br.ts`. Each batch accepts up to 50 files.
 
-## Busca por nome
+## Search by name
 
-Quando há 2 ou mais planilhas no resultado, aparece o campo **Buscar planilha pelo nome**.
+With 2 or more spreadsheets in the result, the **Buscar planilha pelo nome** field appears.
 
-- A busca filtra enquanto você digita e não diferencia maiúsculas de minúsculas, nem letras com e sem acento.
-- Termos separados por espaço precisam aparecer todos no nome, em qualquer ordem: `48h exp1` encontra `BV2-48h-exp1.xlsx`.
-- O trecho encontrado fica destacado no nome. Ao lado do campo aparece "Mostrando X de Y planilhas".
-- Esc ou o botão × limpam a busca. Se nada for encontrado, aparece uma mensagem com o botão "Limpar busca".
-- A lógica fica em `src/core/search.ts`, com testes em `tests/core/search.test.ts`.
-
-## Nome do app
-
-O nome e o subtítulo ficam em `src/config.ts`. Para trocar o nome, basta mudar ali, e também no Design System.
+- It filters while you type, ignoring case and accents.
+- Terms separated by spaces must all appear in the name, in any order: `48h exp1` finds `BV2-48h-exp1.xlsx`.
+- The matched text is highlighted, and "Mostrando X de Y planilhas" appears next to the field.
+- Esc or the × button clear the search. When nothing matches, a message with a "Limpar busca" button appears.
+- The logic is in `src/core/search.ts`, tested in `src/core/search.spec.ts`.
 
 ## Cache
 
-Uma planilha já calculada não é calculada de novo.
+A spreadsheet that was already computed is not computed again.
 
-- A chave do cache é a **impressão digital SHA-256 do conteúdo** do arquivo, junto com a versão das regras (`CALC_VERSION` em `src/core/types.ts`). O mesmo arquivo com outro nome vem do cache. Um arquivo com qualquer byte diferente é recalculado.
-- O cache guarda **só o resultado** (números e mensagens), nunca o conteúdo da planilha. Ele fica no navegador (`localStorage`), vale para as próximas visitas e guarda até 500 planilhas. Acima disso, os resultados mais antigos são descartados.
-- No cartão, o selo **Do cache** aparece ao lado do status. O resumo mostra quantos resultados vieram do cache, e o botão **Limpar cache** apaga tudo.
-- **Ao mudar uma regra de cálculo, aumente `CALC_VERSION`.** Isso invalida os resultados antigos automaticamente.
-- Se o armazenamento estiver cheio ou bloqueado, o app só recalcula e nunca quebra por causa do cache. Erros inesperados do leitor não vão para o cache.
+- The cache key is the **SHA-256 fingerprint of the file content** plus the rules version (`CALC_VERSION` in `src/core/types.ts`). The same file under another name comes from the cache; a file with any different byte is recomputed.
+- The cache stores **only the result**, never the spreadsheet content. It lives in the browser (`localStorage`), lasts across visits and holds up to 500 spreadsheets; past that, the oldest results are dropped.
+- The card shows a **Do cache** badge next to the status, the summary says how many results came from the cache, and the **Limpar cache** button erases everything.
+- **When a calculation rule changes, raise `CALC_VERSION`.** That invalidates the old results automatically.
+- When storage is full or blocked, the app just recomputes and never breaks because of the cache. Unexpected reader errors are not cached.
 
 ## Design
 
-- Telas: https://claude.ai/artifact/3BkQcc3a7oaZy6YNsKTVD5
-- Design System (tokens, componentes, estados, movimento): https://claude.ai/artifact/EWPdcWnjpE2kmqme2tG6Wv
+- Screens: https://claude.ai/artifact/3BkQcc3a7oaZy6YNsKTVD5
+- Design System (tokens, components, states, motion): https://claude.ai/artifact/EWPdcWnjpE2kmqme2tG6Wv
 
-O `src/app/globals.css` é gerado a partir do Design System: as variáveis vêm de `tokens.json`, e as classes `pa-*` e as animações vêm de `components/bundle.css`. As animações param sozinhas quando o sistema operacional pede menos movimento (`prefers-reduced-motion`).
+`src/app/globals.css` is generated from the Design System: the variables come from `tokens.json`, and the `pa-*` classes and the animations from `components/bundle.css`. The animations stop when the operating system asks for less motion (`prefers-reduced-motion`).
 
-## Organização do código
+## Code layout
 
 ```
 src/
-├─ core/            regras de negócio puras (sem React, sem SheetJS): fáceis de testar
-│  ├─ naming.ts     reconhece panel, linha Alive e quadrantes pelo nome
-│  ├─ rows.ts       acha o cabeçalho e converte #Cells
-│  ├─ compute.ts    cálculo de um panel (somas, média entre grupos, validações)
-│  ├─ analyze.ts    junta os dois panels num relatório por arquivo
-│  ├─ errors.ts     códigos de erro + mensagens
-│  ├─ format.ts     números e percentuais no formato brasileiro
-│  └─ search.ts     busca por nome (sem acento, vários termos, destaque)
+├─ core/          pure business rules (no React, no SheetJS), easy to test
+│  ├─ naming.ts   recognizes the panel, the Alive row and the quadrants by name
+│  ├─ rows.ts     finds the header and parses #Cells
+│  ├─ compute.ts  computes one panel (sums, mean across groups, checks)
+│  ├─ analyze.ts  joins the two panels into one report per file
+│  ├─ errors.ts   error codes
+│  ├─ format.ts   numbers and percentages in pt-BR format
+│  └─ search.ts   search by name (accents, several terms, highlight)
 ├─ adapters/
-│  └─ sheetjs.ts    único arquivo que usa a SheetJS (lê .xls/.xlsx/.csv)
+│  └─ sheetjs.ts  the only file that uses SheetJS (reads .xls/.xlsx/.csv)
 ├─ services/
-│  ├─ processBatch.ts  processa os arquivos um a um, isolando os erros
-│  └─ cache.ts         cache de resultados por SHA-256 do conteúdo
-├─ components/      AppHeader, UploadArea, SearchField, BatchSummary, FileResultCard, PanelTable, icons
-└─ app/             página do Next.js (layout, page, CSS)
-tests/
-├─ core/            regras de cálculo, com números conferidos na planilha de exemplo
-├─ services/        isolamento de erros no lote e cache
-├─ adapters/        leitura de .xlsx/.xls/.csv com a SheetJS
-└─ fixtures/exemplo/ planilha FICTÍCIA de exemplo (.xlsx e a mesma grade em JSON)
+│  ├─ process-batch.ts  processes the files one by one, isolating errors
+│  └─ cache.ts          result cache by SHA-256 of the content
+├─ hooks/         use-batch.ts: the page's state
+├─ components/    app header, upload area, search, batch summary, result card, panel table, icons
+├─ messages/      pt-br.ts: all UI copy
+├─ tests/         helpers and the FICTIONAL example spreadsheet (.xlsx and the same grid as JSON)
+└─ app/           the Next.js page (layout, page, CSS)
 ```
 
-Para mudar uma regra de cálculo, edite `src/core/compute.ts` e o teste correspondente em `tests/core/compute.test.ts`.
+Each `*.spec.ts` sits next to the code it tests. To change a calculation rule, edit `src/core/compute.ts` and `src/core/compute.spec.ts`, and raise `CALC_VERSION`.
