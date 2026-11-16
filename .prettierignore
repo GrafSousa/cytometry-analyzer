@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+pnpm-lock.yaml
+# Third-party skills are kept exactly as published.
+.claude/skills
+# Written by `next dev` (see AGENTS.md).
+AGENTS.md
+# Generated from the Design System.
+src/app/globals.css
+coverage
+fixtures-local

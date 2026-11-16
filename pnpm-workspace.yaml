@@ -1,0 +1,9 @@
+# Dependency build scripts must be allowed one by one.
+allowBuilds:
+  # The `prepare` script already runs `lefthook install`, so its postinstall is not needed.
+  lefthook: false
+  # Next.js only needs sharp for image optimization, which a static export does not use.
+  sharp: false
+  # Prebuilt binaries are installed as optional dependencies; the build script is a fallback.
+  unrs-resolver: false
+  esbuild: false
